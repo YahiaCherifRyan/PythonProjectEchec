@@ -35,8 +35,8 @@ BOARD_LIGHT = '#D1D8D2'
 BOARD_DARK = '#898B99'
 
 # Couleurs d'analyse
-CIRCLE_COLOR = '#769656'
-ARROW_COLOR = '#769656'
+CIRCLE_COLOR = '#0a2d15'
+ARROW_COLOR = '#0a2d15'
 CELL_HIGHLIGHT_BG = '#505050'  # Fond gris foncé pour la cellule sélectionnée
 
 
