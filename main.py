@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-main.py - Version STABLE FINALE V9 (Nettoyage de l'Interface Principale)
-- Suppression du bouton "Changer le temps" de la barre latérale principale.
-- Stabilité et fonctionnalités conservées.
+main.py - Version STABLE FINALE V14 (Remplissage Horizontal des Onglets)
+- Permet aux onglets 'Coups', 'Infos' et 'Parties' de s'étendre et de combler l'espace horizontal restant.
 """
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -17,54 +16,45 @@ RANKS = '12345678'
 WHITE = 'w'
 BLACK = 'b'
 
+# Assurez-vous que ces fichiers existent dans le répertoire d'exécution !
 IMAGE_MAP = {
     'P': "wP.png", 'R': "wR.png", 'N': "wN.png", 'B': "wB.png", 'Q': "wQ.png", 'K': "wK.png",
     'p': "bP.png", 'r': "bR.png", 'n': "bN.png", 'b': "bB.png", 'q': "bQ.png", 'k': "bK.png",
-    'S': "eN.png" # Symbole de l'engrenage (eN.png d'après votre dossier)
+    'S': "eN.png"  # Symbole de l'engrenage (eN.png)
 }
 GROUP_ORDER = ['P', 'N', 'B', 'R', 'Q', 'K']
 
 # ---------------- THÈMES (COULEURS) ----------------
 
-# --- Mode Sombre (DARK_THEME) ---
-DARK_BG_PRIMARY = '#262421'
-DARK_BG_SECONDARY = '#312E2B'
-DARK_FG = '#FFFFFF'
-DARK_TIMER_ACTIVE = '#769656'
-DARK_TIMER_INACTIVE = '#404040'
+# --- Couleurs Générales de l'Interface (mode sombre, fixes) ---
+UI_BG_PRIMARY = '#262421'  # Fond principal de la fenêtre et des cadres
+UI_BG_SECONDARY = '#312E2B'  # Fonds des widgets (timers, tabs, boutons, listes)
+UI_FG = '#FFFFFF'  # Couleur du texte principal
+UI_TIMER_ACTIVE = '#769656'  # Couleur de fond du timer actif
+UI_TIMER_INACTIVE = '#404040'  # Couleur de fond du timer inactif
+UI_CELL_HIGHLIGHT_BG = '#505050'  # Couleur de surlignage des cellules dans l'historique
+
+# --- Thèmes du Plateau (variables, basculent) ---
+# Plateau Sombre (Dark Board Theme)
 DARK_BOARD_LIGHT = '#D1D8D2'
 DARK_BOARD_DARK = '#898B99'
 DARK_HIGHLIGHT_LAST_MOVE = '#BACA2B'
 DARK_HIGHLIGHT_SELECTED = '#D0E03C'
 DARK_HIGHLIGHT_TARGET = '#58AC3A'
-DARK_CELL_HIGHLIGHT_BG = '#505050'
 
-# --- Mode Clair (LIGHT_THEME) ---
-LIGHT_BG_PRIMARY = '#F2F0E9'
-LIGHT_BG_SECONDARY = '#FFFFFF'
-LIGHT_FG = '#333333'
-LIGHT_TIMER_ACTIVE = '#769656'
-LIGHT_TIMER_INACTIVE = '#CCCCCC'
+# Plateau Clair (Light Board Theme)
 LIGHT_BOARD_LIGHT = '#EFEFEF'
 LIGHT_BOARD_DARK = '#A4C687'
 LIGHT_HIGHLIGHT_LAST_MOVE = '#F6F690'
 LIGHT_HIGHLIGHT_SELECTED = '#91B981'
 LIGHT_HIGHLIGHT_TARGET = '#609040'
-LIGHT_CELL_HIGHLIGHT_BG = '#DDDDDD'
 
-
-# Variables de Thème Actif (Seront mises à jour au lancement)
-THEME_BG_PRIMARY = DARK_BG_PRIMARY
-THEME_BG_SECONDARY = DARK_BG_SECONDARY
-THEME_FG = DARK_FG
-THEME_TIMER_ACTIVE = DARK_TIMER_ACTIVE
-THEME_TIMER_INACTIVE = DARK_TIMER_INACTIVE
+# Variables du Thème de Plateau Actif (Seront mises à jour au lancement et au changement)
 BOARD_LIGHT = DARK_BOARD_LIGHT
 BOARD_DARK = DARK_BOARD_DARK
 HIGHLIGHT_LAST_MOVE = DARK_HIGHLIGHT_LAST_MOVE
 HIGHLIGHT_SELECTED = DARK_HIGHLIGHT_SELECTED
 HIGHLIGHT_TARGET = DARK_HIGHLIGHT_TARGET
-CELL_HIGHLIGHT_BG = DARK_CELL_HIGHLIGHT_BG
 
 # Couleurs d'analyse (commun aux deux thèmes)
 CIRCLE_COLOR = '#769656'
@@ -177,7 +167,8 @@ class Board:
             for c in range(8):
                 p = self.board[r][c]
                 if not p or self.piece_color(p) != by_color: continue
-                for m in self._piece_moves(r, c, p):
+                # Hack: utiliser _piece_moves non légaux pour vérifier l'attaque
+                for m in self._piece_moves(r, c, p, check_legality=False):
                     if m.to_sq == sq:
                         return True
         return False
@@ -205,7 +196,7 @@ class Board:
             return legal_moves
         return moves
 
-    def _piece_moves(self, r, c, p):
+    def _piece_moves(self, r, c, p, check_legality=True):
         moves = []
         color = self.piece_color(p)
         pt = p.upper()
@@ -281,6 +272,9 @@ class Board:
                     target = self.board[nr][nc]
                     if target is None or self.piece_color(target) != color:
                         moves.append(Move((r, c), (nr, nc), p, captured=target if target else None))
+
+            if not check_legality: return moves
+
             if (r, c) == ((0, 4) if color == WHITE else (7, 4)):
                 if color == WHITE:
                     king_side = self.castling_rights.get('K', False)
@@ -413,7 +407,7 @@ class Board:
         if promos and not promotion: return None
         for m in candidates:
             if promotion:
-                if m.promotion and promotion.lower() == m.promotion.lower():
+                if m.promotion and promotion.lower() == m.promotion[0].lower():
                     self.push_move(m);
                     return m
             else:
@@ -451,41 +445,41 @@ def move_to_readable(m: Move) -> str:
         else:
             return f"{dest}{promo}"
     else:
+        # Simplification de la notation pour l'affichage (pas de désambiguation complète)
         return f"{piece}{capture}{dest}{promo}"
 
 
-# ---------------- Treeview History ----------------
+# ---------------- Treeview History (Onglet Coups) ----------------
 class TreeviewHistory(tk.Frame):
     def __init__(self, master, app_instance, *args, **kwargs):
         super().__init__(master, *args, **kwargs)
         self.app = app_instance
 
-        # FIX: Utiliser la variable de thème
-        self.configure(bg=THEME_BG_PRIMARY)
+        self.configure(bg=UI_BG_PRIMARY)
 
         style = ttk.Style(self)
         style.theme_use("default")
 
         style.configure("Treeview",
-                        background=THEME_BG_SECONDARY,
-                        foreground=THEME_FG,
-                        fieldbackground=THEME_BG_SECONDARY,
+                        background=UI_BG_SECONDARY,
+                        foreground=UI_FG,
+                        fieldbackground=UI_BG_SECONDARY,
                         rowheight=25,
                         font=('TkDefaultFont', 10))
 
         style.configure("Treeview.Heading",
-                        background=THEME_BG_PRIMARY,
-                        foreground=THEME_FG,
+                        background=UI_BG_PRIMARY,
+                        foreground=UI_FG,
                         font=('TkDefaultFont', 10, 'bold'))
 
         self.tree = ttk.Treeview(self, columns=('White', 'Black'), show='headings', height=12)
-
-        self.tree.configure(selectmode='none')
+        self.tree.configure(selectmode='browse')
 
         self.tree.heading('#0', text='No.', anchor='e')
         self.tree.heading('White', text='Blancs', anchor='center')
         self.tree.heading('Black', text='Noirs', anchor='center')
 
+        # FIX 1: Colonnes non redimensionnables et largeur fixe
         self.tree.column('#0', width=40, anchor='e', stretch=tk.NO)
         self.tree.column('White', width=130, anchor='center', stretch=tk.NO)
         self.tree.column('Black', width=130, anchor='center', stretch=tk.NO)
@@ -499,6 +493,22 @@ class TreeviewHistory(tk.Frame):
         self.last_selected_cell: Optional[Tuple[str, str]] = None
 
         self.tree.bind("<ButtonRelease-1>", self.on_history_select)
+
+        # FIX 2: Ajout du binding pour bloquer manuellement le redimensionnement des colonnes
+        self.tree.bind('<Button-1>', self._on_heading_click, add='+')
+
+    # FIX 3: Nouvelle méthode pour gérer les clics sur l'en-tête (bloque le redimensionnement)
+    def _on_heading_click(self, event):
+        """Bloque le redimensionnement des colonnes 'Blancs' et 'Noirs' en mode non-resizable."""
+        region = self.tree.identify("region", event.x, event.y)
+
+        if region == "separator":
+            column = self.tree.identify_column(event.x)
+
+            # #1 est la colonne 'White' et #2 est 'Black'
+            if column in ('#1', '#2'):
+                # Si on clique sur le séparateur d'une des colonnes, on bloque l'événement
+                return "break"
 
     def clear(self):
         for item in self.tree.get_children():
@@ -517,6 +527,7 @@ class TreeviewHistory(tk.Frame):
             new_tags = tuple(t for t in current_tags if not t.startswith("selected_#"))
             self.tree.item(item_id, tags=new_tags)
             self.last_selected_cell = None
+        self.tree.selection_remove(self.tree.selection())
 
     def apply_cell_selection(self, item_id, col_id):
         """Applique le surlignage à la cellule spécifiée et la définit comme la dernière sélection."""
@@ -524,8 +535,7 @@ class TreeviewHistory(tk.Frame):
         self.deselect_all_cells()
 
         tag_name = f"selected_{col_id}"
-        # FIX: Utiliser la variable de thème
-        self.tree.tag_configure(tag_name, background=CELL_HIGHLIGHT_BG, foreground=THEME_FG)
+        self.tree.tag_configure(tag_name, background=UI_CELL_HIGHLIGHT_BG, foreground=UI_FG)
 
         current_tags = self.tree.item(item_id, 'tags')
         new_tags = (*current_tags, tag_name)
@@ -576,38 +586,171 @@ class TreeviewHistory(tk.Frame):
         # 2. Restaurer la position (avec animation)
         self.app.restore_position(target_index, animate=True)
 
+        # 3. Mettre à jour les infos
+        self.app.info_tab.refresh_info()
+
+
+# ---------------- Onglet Infos (Coups Légaux) ----------------
+class InfoTab(tk.Frame):
+    def __init__(self, master, app_instance, *args, **kwargs):
+        super().__init__(master, *args, **kwargs)
+        self.app = app_instance
+        self.configure(bg=UI_BG_SECONDARY)
+
+        # Largeur augmentée (width=45) pour forcer la largeur minimale de la side_frame
+        self.text_area = tk.Text(self, bg=UI_BG_SECONDARY, fg=UI_FG,
+                                 font=('TkDefaultFont', 10), wrap=tk.WORD,
+                                 height=12, width=45, borderwidth=0, relief='flat')
+        self.text_area.pack(fill='both', expand=False, padx=5, pady=5)
+        self.text_area.insert(tk.END, "Informations sur le jeu...")
+        self.text_area.config(state=tk.DISABLED)
+
+    def refresh_info(self):
+        """Met à jour l'affichage avec les coups légaux actuels."""
+        self.text_area.config(state=tk.NORMAL)
+        self.text_area.delete(1.0, tk.END)
+
+        if self.app.animating:
+            self.text_area.insert(tk.END, "Animation de relecture en cours...")
+            self.text_area.config(state=tk.DISABLED)
+            return
+
+        moves = self.app.board.generate_moves(legal=True)
+        turn = "Blancs" if self.app.board.turn == WHITE else "Noirs"
+
+        self.text_area.insert(tk.END, f"--- À jouer : {turn} ---\n\n")
+
+        if not moves:
+            status, _ = self.app.board.game_status()
+            self.text_area.insert(tk.END, f"Partie terminée : {status.upper()}!\n")
+            self.text_area.config(state=tk.DISABLED)
+            return
+
+        # Groupement des coups par pièce
+        piece_moves: Dict[str, List[str]] = collections.defaultdict(list)
+        for m in moves:
+            piece_symbol = m.piece.upper()
+            readable_move = move_to_readable(m)
+            piece_moves[piece_symbol].append(readable_move)
+
+        self.text_area.insert(tk.END, f"Coups légaux possibles ({len(moves)}) :\n")
+
+        # Affichage par ordre de groupe
+        for piece_type in GROUP_ORDER:
+            if piece_type in piece_moves:
+                moves_list = ", ".join(sorted(piece_moves[piece_type]))
+                self.text_area.insert(tk.END, f"\n{piece_type} : {moves_list}")
+
+        self.text_area.config(state=tk.DISABLED)
+
+
+# ---------------- Onglet Parties (Historique de parties) ----------------
+class GamesTab(tk.Frame):
+    def __init__(self, master, app_instance, *args, **kwargs):
+        super().__init__(master, *args, **kwargs)
+        self.app = app_instance
+        self.configure(bg=UI_BG_SECONDARY)
+
+        style = ttk.Style(self)
+        style.configure("GamesList.Treeview",
+                        background=UI_BG_SECONDARY,
+                        foreground=UI_FG,
+                        fieldbackground=UI_BG_SECONDARY,
+                        rowheight=25,
+                        font=('TkDefaultFont', 10))
+
+        self.tree = ttk.Treeview(self, columns=('Name',), show='headings',
+                                 height=12, style='GamesList.Treeview', selectmode='browse')
+
+        self.tree.heading('Name', text='Parties Enregistrées', anchor='center')
+        # Largeur fixe basée sur la taille souhaitée du SideFrame
+        self.tree.column('Name', width=300, anchor='w', stretch=tk.NO)
+
+        vsb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+
+        vsb.pack(side='right', fill='y')
+        self.tree.pack(side='left', fill='both', expand=True)
+
+        self.tree.bind("<<TreeviewSelect>>", self.on_game_select)
+
+    def refresh_list(self):
+        """Met à jour la liste des parties affichées."""
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        for idx, (name, history) in enumerate(self.app.saved_games):
+            item_id = f"saved_game_{idx}"
+            if history:
+                last_move_readable = move_to_readable(history[-1])
+                display_name = f"{name} ({len(history)} coups, {last_move_readable})"
+            else:
+                display_name = f"{name} (Nouvelle partie)"
+
+            self.tree.insert('', 'end', text=name, values=(display_name,), iid=item_id)
+
+    def on_game_select(self, event):
+        """Charge la partie sélectionnée dans le plateau pour l'analyse."""
+        selected_item = self.tree.selection()
+        if not selected_item: return
+
+        item_id = selected_item[0]
+        try:
+            idx = int(item_id.split('_')[-1])
+        except ValueError:
+            return
+
+        if idx < len(self.app.saved_games):
+            name, history = self.app.saved_games[idx]
+
+            self.app.full_history_data = copy.deepcopy(history)
+
+            target_index = len(history) - 1
+            if target_index >= 0:
+                self.app.restore_position(target_index, animate=False)
+            else:
+                self.app.on_new()  # Si la partie est vide, réinitialiser
+
+            self.app.started = False
+            self.app.game_over = False
+            self.app.start_button.config(text="Commencer la partie")
+
+            self.app.tab_control.select(0)
+
+            self.tree.selection_remove(item_id)
+
+        # ---------------- ChessApp (Fenêtre Principale) ----------------
+
 
 class ChessApp(tk.Tk):
     # CRITICAL FIX: Liste pour stocker les références d'images du canevas
-    canvas_images: List[tk.PhotoImage] = [] 
-    
+    canvas_images: List[tk.PhotoImage] = []
+
     def __init__(self):
         super().__init__()
         self.title("Échecs - Style Chess")
         self.resizable(False, False)
-        # FIX: Utiliser la variable de thème
-        self.configure(bg=THEME_BG_PRIMARY)
+        self.configure(bg=UI_BG_PRIMARY)
 
         style = ttk.Style()
         style.theme_use("default")
-        # FIX: Utiliser la variable de thème
-        style.configure('Dark.TButton', background=THEME_BG_SECONDARY, foreground=THEME_FG, borderwidth=0,
-                        focuscolor=THEME_BG_SECONDARY, relief='flat')
-        style.map('Dark.TButton', background=[('active', '#413E3B')]) # Reste sombre pour l'effet 'active'
+
+        style.configure('Dark.TButton', background=UI_BG_SECONDARY, foreground=UI_FG, borderwidth=0,
+                        focuscolor=UI_BG_SECONDARY, relief='flat')
+        style.map('Dark.TButton', background=[('active', '#413E3B')])
 
         self.square_size = 72
         self.board_px = 8 * self.square_size
 
-        self.board_frame = tk.Frame(self, bg=THEME_BG_PRIMARY)
+        self.board_frame = tk.Frame(self, bg=UI_BG_PRIMARY)
         self.board_frame.grid(row=0, column=0, sticky='nw', padx=6, pady=6)
-        self.side_frame = tk.Frame(self, bg=THEME_BG_PRIMARY)
+        self.side_frame = tk.Frame(self, bg=UI_BG_PRIMARY)
         self.side_frame.grid(row=0, column=1, sticky='n', padx=6, pady=6)
-        
-        # CRITICAL FIX: Charger les images EN PREMIER
+
         self._load_images()
 
         # --------------------- SECTION SIDEBAR ---------------------
-        self.timer_container = tk.Frame(self.side_frame, bg=THEME_BG_PRIMARY)
+        self.timer_container = tk.Frame(self.side_frame, bg=UI_BG_PRIMARY)
         self.timer_container.pack(pady=(0, 10), padx=5, fill='x')
 
         self.black_timer_frame = self._create_timer_widget(BLACK)
@@ -617,57 +760,70 @@ class ChessApp(tk.Tk):
         self.white_timer_frame.pack(fill='x', pady=(5, 0))
 
         # --- Panneau de Contrôle Supérieur (Analyse, Engrenage) ---
-        control_frame = tk.Frame(self.side_frame, bg=THEME_BG_PRIMARY)
+        control_frame = tk.Frame(self.side_frame, bg=UI_BG_PRIMARY)
         control_frame.pack(fill='x', pady=(10, 0))
-        
-        # BOUTON ENGRENAGE (image chargée via _load_images)
-        self.settings_img = self.images.get('S_icon') # Utilise la clé redimensionnée
-        self.theme_btn = ttk.Button(control_frame, 
-                                    image=self.settings_img, 
-                                    command=self.open_settings_window, 
+
+        self.settings_img = self.images.get('S_icon')
+        self.theme_btn = ttk.Button(control_frame,
+                                    image=self.settings_img,
+                                    command=self.open_settings_window,
                                     style='Dark.TButton',
-                                    width=2) 
+                                    width=2)
         self.theme_btn.pack(side='right', padx=(5, 0))
-        
-        # TITRE A COTE DE L'ENGRENAGE
-        tk.Label(control_frame, text="Analyse", font=('TkDefaultFont', 11, 'bold'), bg=THEME_BG_PRIMARY,
-                 fg=THEME_FG).pack(side='right', padx=(10, 5))
 
+        tk.Label(control_frame, text="Analyse", font=('TkDefaultFont', 11, 'bold'), bg=UI_BG_PRIMARY,
+                 fg=UI_FG).pack(side='right', padx=(10, 5))
 
-        # --- Barre d'Onglets (Coups, Infos, etc.) ---
-        tabs_frame = tk.Frame(self.side_frame, bg=THEME_BG_PRIMARY)
-        tabs_frame.pack(fill='x', pady=(10, 0))
-        
-        style.configure('Tab.TButton', background=THEME_BG_SECONDARY, foreground=THEME_FG, borderwidth=0, relief='flat', font=('Arial', 9))
-        style.map('Tab.TButton', background=[('active', '#413E3B')], relief=[('pressed', 'sunken')])
-        
-        ttk.Button(tabs_frame, text="Coups", style='Tab.TButton').pack(side='left', fill='x', expand=True, padx=(0, 1))
-        ttk.Button(tabs_frame, text="Infos", style='Tab.TButton').pack(side='left', fill='x', expand=True, padx=(1, 1))
-        ttk.Button(tabs_frame, text="Parties", style='Tab.TButton').pack(side='left', fill='x', expand=True, padx=(1, 0))
+        # --- Barre d'Onglets (Notebook) ---
+        style.configure('TNotebook', background=UI_BG_PRIMARY, borderwidth=0)
 
+        # Agrandissement des onglets
+        style.configure('TNotebook.Tab',
+                        background=UI_BG_SECONDARY,
+                        foreground=UI_FG,
+                        font=('TkDefaultFont', 11),
+                        padding=[15, 5])
 
-        # --- Panneau de l'Historique ---
-        self.history_widget = TreeviewHistory(self.side_frame, self, bg=THEME_BG_PRIMARY)
-        self.history_widget.pack(fill='x', padx=5, pady=(5, 0))
+        style.map('TNotebook.Tab',
+                  background=[('selected', UI_BG_PRIMARY)],
+                  foreground=[('selected', UI_FG)])
+
+        self.tab_control = ttk.Notebook(self.side_frame)
+        self.tab_control.pack(fill='x', padx=5, pady=(5, 0))
+
+        # Onglet 1: Coups
+        history_frame = tk.Frame(self.tab_control, bg=UI_BG_PRIMARY)
+        self.history_widget = TreeviewHistory(history_frame, self, bg=UI_BG_PRIMARY)
+        self.history_widget.pack(fill='both', expand=True)
+        self.tab_control.add(history_frame, text="Coups")
+
+        # Onglet 2: Infos (Coups légaux)
+        info_frame = tk.Frame(self.tab_control, bg=UI_BG_SECONDARY)
+        self.info_tab = InfoTab(info_frame, self)
+        self.info_tab.pack(fill='both', expand=True)
+        self.tab_control.add(info_frame, text="Infos")
+
+        # Onglet 3: Parties (Historique)
+        games_frame = tk.Frame(self.tab_control, bg=UI_BG_SECONDARY)
+        self.games_tab = GamesTab(games_frame, self)
+        self.games_tab.pack(fill='both', expand=True)
+        self.tab_control.add(games_frame, text="Parties")
 
         # --- Contrôles de Partie ---
-        btn_frame = tk.Frame(self.side_frame, bg=THEME_BG_PRIMARY)
+        btn_frame = tk.Frame(self.side_frame, bg=UI_BG_PRIMARY)
         btn_frame.pack(pady=12, fill='x')
         ttk.Button(btn_frame, text="Annuler", command=self.on_undo, style='Dark.TButton').pack(side='left', padx=2,
                                                                                                fill='x', expand=True)
         ttk.Button(btn_frame, text="Nouvelle partie", command=self.on_new, style='Dark.TButton').pack(side='left',
                                                                                                       padx=2, fill='x',
                                                                                                       expand=True)
-        # SUPPRESSION du bouton "Changer le temps" de la barre latérale principale
-        
-
 
         # --------------------- SECTION ÉCHIQUIER ---------------------
-        self.status = tk.Label(self.board_frame, text="", anchor='w', bg=THEME_BG_PRIMARY, fg=THEME_FG, height=1,
+        self.status = tk.Label(self.board_frame, text="", anchor='w', bg=UI_BG_PRIMARY, fg=UI_FG, height=1,
                                font=('TkDefaultFont', 11))
         self.status.grid(row=0, column=0, sticky='we', pady=(0, 6), padx=4)
 
-        self.canvas = tk.Canvas(self.board_frame, width=self.board_px, height=self.board_px, bg=THEME_BG_PRIMARY,
+        self.canvas = tk.Canvas(self.board_frame, width=self.board_px, height=self.board_px, bg=UI_BG_PRIMARY,
                                 highlightthickness=0)
         self.canvas.grid(row=1, column=0)
 
@@ -687,6 +843,8 @@ class ChessApp(tk.Tk):
         self.current_arrow_id: Optional[int] = None
 
         self.full_history_data: List[Move] = []
+        self.saved_games: List[Tuple[str, List[Move]]] = []
+
         self.last_move_squares: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None
         self.is_flipped = False
         self.current_theme = 'dark'
@@ -702,80 +860,48 @@ class ChessApp(tk.Tk):
         self.init_seconds = 5 * 60
         self.time_left = {WHITE: self.init_seconds, BLACK: self.init_seconds}
         self.clock_history: List[Tuple[int, int]] = []
-        
+
         self.apply_theme_colors('dark')
-        
+
         self.update_clock_labels()
         self.after(1000, self._tick)
 
         self.draw_board()
+        self.info_tab.refresh_info()
 
     def apply_theme_colors(self, theme_name):
-        """Met à jour toutes les variables globales et les widgets de l'interface."""
-        global THEME_BG_PRIMARY, THEME_BG_SECONDARY, THEME_FG, THEME_TIMER_ACTIVE, THEME_TIMER_INACTIVE
-        global BOARD_LIGHT, BOARD_DARK, HIGHLIGHT_LAST_MOVE, HIGHLIGHT_SELECTED, HIGHLIGHT_TARGET, CELL_HIGHLIGHT_BG
-        
+        """Met à jour les variables globales du thème du plateau et redessine."""
+        global BOARD_LIGHT, BOARD_DARK, HIGHLIGHT_LAST_MOVE, HIGHLIGHT_SELECTED, HIGHLIGHT_TARGET
+
         if theme_name == 'dark':
-            THEME_BG_PRIMARY = DARK_BG_PRIMARY
-            THEME_BG_SECONDARY = DARK_BG_SECONDARY
-            THEME_FG = DARK_FG
-            THEME_TIMER_ACTIVE = DARK_TIMER_ACTIVE
-            THEME_TIMER_INACTIVE = DARK_TIMER_INACTIVE
             BOARD_LIGHT = DARK_BOARD_LIGHT
             BOARD_DARK = DARK_BOARD_DARK
             HIGHLIGHT_LAST_MOVE = DARK_HIGHLIGHT_LAST_MOVE
             HIGHLIGHT_SELECTED = DARK_HIGHLIGHT_SELECTED
             HIGHLIGHT_TARGET = DARK_HIGHLIGHT_TARGET
-            CELL_HIGHLIGHT_BG = DARK_CELL_HIGHLIGHT_BG
-        else: # light
-            THEME_BG_PRIMARY = LIGHT_BG_PRIMARY
-            THEME_BG_SECONDARY = LIGHT_BG_SECONDARY
-            THEME_FG = LIGHT_FG
-            THEME_TIMER_ACTIVE = LIGHT_TIMER_ACTIVE
-            THEME_TIMER_INACTIVE = LIGHT_TIMER_INACTIVE
+        else:  # light
             BOARD_LIGHT = LIGHT_BOARD_LIGHT
             BOARD_DARK = LIGHT_BOARD_DARK
             HIGHLIGHT_LAST_MOVE = LIGHT_HIGHLIGHT_LAST_MOVE
             HIGHLIGHT_SELECTED = LIGHT_HIGHLIGHT_SELECTED
             HIGHLIGHT_TARGET = LIGHT_HIGHLIGHT_TARGET
-            CELL_HIGHLIGHT_BG = LIGHT_CELL_HIGHLIGHT_BG
 
-        # Mise à jour des widgets Tkinter après le changement des variables globales
-        self.configure(bg=THEME_BG_PRIMARY)
-        self.board_frame.config(bg=THEME_BG_PRIMARY)
-        self.side_frame.config(bg=THEME_BG_PRIMARY)
-        self.timer_container.config(bg=THEME_BG_PRIMARY)
-        self.status.config(bg=THEME_BG_PRIMARY, fg=THEME_FG)
-        self.canvas.config(bg=THEME_BG_PRIMARY)
-        
-        # Mise à jour des sous-widgets
+        # Mise à jour des minuteurs (ils doivent refléter UI_BG_SECONDARY)
         for frame in [self.black_timer_frame, self.white_timer_frame]:
-            frame.config(bg=THEME_BG_SECONDARY)
+            frame.config(bg=UI_BG_SECONDARY)
             for widget in frame.winfo_children():
                 if isinstance(widget, tk.Label):
-                    widget.config(bg=THEME_BG_SECONDARY, fg=THEME_FG)
-        
-        # Mise à jour de l'historique
-        self.history_widget.config(bg=THEME_BG_PRIMARY)
-        
-        style = ttk.Style()
-        style.configure("Treeview", background=THEME_BG_SECONDARY, foreground=THEME_FG, fieldbackground=THEME_BG_SECONDARY)
-        style.configure("Treeview.Heading", background=THEME_BG_PRIMARY, foreground=THEME_FG)
-        
-        # Mise à jour des boutons ttk (y compris le bouton de thème, flip et temps)
-        style.configure('Dark.TButton', background=THEME_BG_SECONDARY, foreground=THEME_FG)
-
+                    widget.config(bg=UI_BG_SECONDARY, fg=UI_FG)
 
     def toggle_theme(self, target_theme=None):
-        """Bascule entre le mode sombre et le mode clair."""
+        """Bascule entre le mode sombre et le mode clair du plateau."""
         if target_theme is None:
             target_theme = 'light' if self.current_theme == 'dark' else 'dark'
 
         self.current_theme = target_theme
-        
+
         self.apply_theme_colors(self.current_theme)
         self.draw_board()
-
 
     def flip_board(self):
         """Inverse l'orientation de l'échiquier."""
@@ -784,68 +910,54 @@ class ChessApp(tk.Tk):
 
     def open_settings_window(self):
         """Ouvre une fenêtre Toplevel pour la configuration du thème, du flip et du temps."""
-        
-        top = tk.Toplevel(self, bg=THEME_BG_PRIMARY)
+
+        top = tk.Toplevel(self, bg=UI_BG_PRIMARY)
         top.title("Paramètres du Jeu")
         top.resizable(False, False)
-        
-        main_frame = tk.Frame(top, bg=THEME_BG_PRIMARY, padx=20, pady=20)
+
+        main_frame = tk.Frame(top, bg=UI_BG_PRIMARY, padx=20, pady=20)
         main_frame.pack(fill="both", expand=True)
 
         # --- Thème ---
-        theme_frame = tk.Frame(main_frame, bg=THEME_BG_SECONDARY, padx=10, pady=10)
+        theme_frame = tk.Frame(main_frame, bg=UI_BG_SECONDARY, padx=10, pady=10)
         theme_frame.pack(fill='x', pady=5)
-        tk.Label(theme_frame, text="Thème de l'échiquier :", bg=THEME_BG_SECONDARY, fg=THEME_FG).pack(side='left')
-        
-        theme_var = tk.StringVar(value=self.current_theme)
-        
+        tk.Label(theme_frame, text="Thème du plateau :", bg=UI_BG_SECONDARY, fg=UI_FG).pack(side='left')
+
         def set_theme_and_close(name):
             self.toggle_theme(name)
             top.destroy()
-            
-        ttk.Button(theme_frame, text="Sombre", command=lambda: set_theme_and_close('dark'), style='Dark.TButton').pack(side='left', padx=10)
-        ttk.Button(theme_frame, text="Clair", command=lambda: set_theme_and_close('light'), style='Dark.TButton').pack(side='left')
+
+        ttk.Button(theme_frame, text="Sombre", command=lambda: set_theme_and_close('dark'), style='Dark.TButton').pack(
+            side='left', padx=10)
+        ttk.Button(theme_frame, text="Clair", command=lambda: set_theme_and_close('light'), style='Dark.TButton').pack(
+            side='left')
 
         # --- Flip Board ---
-        flip_frame = tk.Frame(main_frame, bg=THEME_BG_SECONDARY, padx=10, pady=10)
+        flip_frame = tk.Frame(main_frame, bg=UI_BG_SECONDARY, padx=10, pady=10)
         flip_frame.pack(fill='x', pady=5)
-        tk.Label(flip_frame, text="Orientation :", bg=THEME_BG_SECONDARY, fg=THEME_FG).pack(side='left')
-        
+        tk.Label(flip_frame, text="Orientation :", bg=UI_BG_SECONDARY, fg=UI_FG).pack(side='left')
+
         flip_text = "Noir en bas" if self.is_flipped else "Blanc en bas"
-        self.flip_status_label = tk.Label(flip_frame, text=flip_text, bg=THEME_BG_SECONDARY, fg=THEME_FG)
+        self.flip_status_label = tk.Label(flip_frame, text=flip_text, bg=UI_BG_SECONDARY, fg=UI_FG)
         self.flip_status_label.pack(side='left', padx=10)
-        
+
         def do_flip():
             self.flip_board()
             self.flip_status_label.config(text="Noir en bas" if self.is_flipped else "Blanc en bas")
-            
+
         ttk.Button(flip_frame, text="Inverser", command=do_flip, style='Dark.TButton').pack(side='right')
 
         # --- Changer le temps ---
-        time_frame = tk.Frame(main_frame, bg=THEME_BG_SECONDARY, padx=10, pady=10)
+        time_frame = tk.Frame(main_frame, bg=UI_BG_SECONDARY, padx=10, pady=10)
         time_frame.pack(fill='x', pady=5)
-        tk.Label(time_frame, text="Temps Initial (min):", bg=THEME_BG_SECONDARY, fg=THEME_FG).pack(side='left')
-        
-        # CORRECTION DE L'ERREUR DE TYPAGE
-        ttk.Button(time_frame, text="Changer", command=lambda: self.set_time_dialog(top), style='Dark.TButton').pack(side='right')
+        current_time_str = f"Temps actuel: {self.init_seconds // 60} min"
+        tk.Label(time_frame, text=current_time_str, bg=UI_BG_SECONDARY, fg=UI_FG).pack(side='left')
 
-        top.grab_set() # Empêche d'interagir avec la fenêtre principale
+        ttk.Button(time_frame, text="Changer", command=lambda: self._set_time_dialog(top), style='Dark.TButton').pack(
+            side='right')
+
+        top.grab_set()
         self.wait_window(top)
-
-
-    def set_time_dialog(self, parent_window): # Modifié pour accepter parent_window
-        """Ouvre la boîte de dialogue pour changer le temps."""
-        val = simpledialog.askinteger("Param. temps", "Temps initial (minutes) :", 
-                                      initialvalue=self.init_seconds // 60,
-                                      minvalue=1, maxvalue=180, parent=parent_window) # Ajout de parent=parent_window
-        if val is None: return
-        self.init_seconds = int(val) * 60
-        self.time_left = {WHITE: self.init_seconds, BLACK: self.init_seconds}
-        self.clock_history = []
-        self.update_clock_labels()
-        # Fermer la fenêtre de paramètres après l'action
-        parent_window.destroy()
-
 
     def _animate_history_replay(self, moves_to_play: List[Move], current_index: int, total_moves: int,
                                 temp_board_final: Board, temp_captured_w_final: List[str],
@@ -860,6 +972,7 @@ class ChessApp(tk.Tk):
             self.animating = False
             self.last_move_squares = self._get_last_move_from_history()
             self.draw_board()
+            self.info_tab.refresh_info()
             return
 
         self.animating = True
@@ -891,7 +1004,7 @@ class ChessApp(tk.Tk):
         dy = (y1 - y0) / steps
 
         pid = self.canvas.create_image(x0, y0, image=img, tags="anim_piece")
-        self.canvas.img_anim = img 
+        self.canvas.img_anim = img
 
         def step(i, curx, cury):
             if i >= steps:
@@ -939,13 +1052,15 @@ class ChessApp(tk.Tk):
 
         for move in moves_to_play:
             move_copy = copy.deepcopy(move)
-            temp_board_final.push_move(move_copy)
+
             if move.captured:
                 mover_color = WHITE if move.piece.isupper() else BLACK
                 if mover_color == WHITE:
                     temp_captured_w_final.append(move.captured)
                 else:
                     temp_captured_b_final.append(move.captured)
+
+            temp_board_final.push_move(move_copy)
             last_move_squares = (move.from_sq, move.to_sq)
 
         # Si pas d'animation, on applique l'état final directement
@@ -958,6 +1073,7 @@ class ChessApp(tk.Tk):
             self.started = False
             self.last_move_squares = last_move_squares
             self.draw_board()
+            self.info_tab.refresh_info()
             return
 
         # --- Lancement de l'Animation ---
@@ -967,13 +1083,14 @@ class ChessApp(tk.Tk):
         self.legal_targets = []
         self.animating = True
         self.started = False
-        self.last_move_squares = None # Effacer pendant l'animation
+        self.last_move_squares = None
 
         # Réinitialiser le plateau au début (pour un replay propre)
         self.board = Board()
         self.captured_by_white = []
         self.captured_by_black = []
         self.draw_board()
+        self.info_tab.refresh_info()
 
         self._animate_history_replay(moves_to_play, 0, len(moves_to_play), temp_board_final, temp_captured_w_final,
                                      temp_captured_b_final)
@@ -981,8 +1098,8 @@ class ChessApp(tk.Tk):
     def _load_images(self):
         self.images: Dict[str, tk.PhotoImage] = {}
         self.small_images: Dict[str, tk.PhotoImage] = {}
-        target_icon_size = 24 
-        
+        target_icon_size = 24
+
         for key, filename in IMAGE_MAP.items():
             try:
                 img_main = tk.PhotoImage(file=filename)
@@ -996,7 +1113,7 @@ class ChessApp(tk.Tk):
                     else:
                         img_small = img_main
                     self.small_images[key] = img_small
-                
+
                 else:
                     # Redimensionnement de l'engrenage pour l'icône
                     scale_x = img_main.width() // target_icon_size
@@ -1008,8 +1125,7 @@ class ChessApp(tk.Tk):
             except Exception as e:
                 # Créer un placeholder si l'image manque
                 img_placeholder = tk.PhotoImage(width=target_icon_size, height=target_icon_size)
-                img_placeholder.put("red", to=(0,0,target_icon_size,target_icon_size))
-                
+
                 self.images[key] = img_placeholder
                 if key != 'S':
                     self.small_images[key] = img_placeholder
@@ -1017,25 +1133,24 @@ class ChessApp(tk.Tk):
                     self.images['S_icon'] = img_placeholder
 
     def _create_timer_widget(self, color):
-        # FIX: Utiliser la variable de thème
-        frame = tk.Frame(self.timer_container, bg=THEME_BG_SECONDARY, relief='flat', borderwidth=0, padx=8, pady=8)
+        frame = tk.Frame(self.timer_container, bg=UI_BG_SECONDARY, relief='flat', borderwidth=0, padx=8, pady=8)
 
-        name_label = tk.Label(frame, text="Blanc" if color == WHITE else "Noir", bg=THEME_BG_SECONDARY, fg=THEME_FG,
+        name_label = tk.Label(frame, text="Blanc" if color == WHITE else "Noir", bg=UI_BG_SECONDARY, fg=UI_FG,
                               font=('TkDefaultFont', 10, 'bold'))
         name_label.pack(side='left', padx=(0, 10))
 
         if color == WHITE:
-            self.time_label_white = tk.Label(frame, text="05:00", font=('Courier', 20, 'bold'), bg=THEME_TIMER_INACTIVE,
-                                             fg=THEME_FG, width=6, padx=5)
+            self.time_label_white = tk.Label(frame, text="05:00", font=('Courier', 20, 'bold'), bg=UI_TIMER_INACTIVE,
+                                             fg=UI_FG, width=6, padx=5)
             self.time_label_white.pack(side='right', padx=(10, 0))
             self.white_timer_bg = self.time_label_white
         else:
-            self.time_label_black = tk.Label(frame, text="05:00", font=('Courier', 20, 'bold'), bg=THEME_TIMER_INACTIVE,
-                                             fg=THEME_FG, width=6, padx=5)
+            self.time_label_black = tk.Label(frame, text="05:00", font=('Courier', 20, 'bold'), bg=UI_TIMER_INACTIVE,
+                                             fg=UI_FG, width=6, padx=5)
             self.time_label_black.pack(side='right', padx=(10, 0))
             self.black_timer_bg = self.time_label_black
 
-        capture_frame = tk.Frame(frame, bg=THEME_BG_SECONDARY)
+        capture_frame = tk.Frame(frame, bg=UI_BG_SECONDARY)
         capture_frame.pack(side='right', expand=True, fill='x', padx=(0, 10))
 
         if color == WHITE:
@@ -1047,11 +1162,10 @@ class ChessApp(tk.Tk):
 
     # mapping
     def board_to_canvas(self, r, c):
-        # NOUVEAU: Logique de flip
         if self.is_flipped:
             return (r, 7 - c)
         else:
-            return (7 - r, c) # Blanc en bas par défaut
+            return (7 - r, c)
 
     def canvas_to_board(self, canvas_r, canvas_c):
         if self.is_flipped:
@@ -1075,13 +1189,16 @@ class ChessApp(tk.Tk):
 
     def draw_board(self):
         self.canvas.delete("all")
-        # CRITICAL FIX: Vider la liste des références d'images du canevas
         ChessApp.canvas_images = []
-        
+
         light, dark = BOARD_LIGHT, BOARD_DARK
-        coord_color = LIGHT_FG if self.current_theme == 'dark' else DARK_FG
-        
-        # 1. Dessin des cases de l'échiquier
+
+        if BOARD_LIGHT == LIGHT_BOARD_LIGHT:
+            coord_color = '#333333'
+        else:
+            coord_color = UI_FG
+
+            # 1. Dessin des cases de l'échiquier
         for row in range(8):
             for col in range(8):
                 x1 = col * self.square_size;
@@ -1090,7 +1207,7 @@ class ChessApp(tk.Tk):
                 self.canvas.create_rectangle(x1, y1, x1 + self.square_size, y1 + self.square_size, fill=color,
                                              outline=color)
 
-        # 2. NOUVEAU: Surlignage du dernier coup
+        # 2. Surlignage du dernier coup
         if self.last_move_squares:
             from_sq, to_sq = self.last_move_squares
 
@@ -1098,7 +1215,8 @@ class ChessApp(tk.Tk):
                 cr, cc = self.board_to_canvas(*sq)
                 x1 = cc * self.square_size;
                 y1 = cr * self.square_size
-                self.canvas.create_rectangle(x1, y1, x1 + self.square_size, y1 + self.square_size, fill=HIGHLIGHT_LAST_MOVE,
+                self.canvas.create_rectangle(x1, y1, x1 + self.square_size, y1 + self.square_size,
+                                             fill=HIGHLIGHT_LAST_MOVE,
                                              outline=HIGHLIGHT_LAST_MOVE, tags="last_move_highlight", stipple="gray50")
 
         # 3. Dessin des annotations
@@ -1137,14 +1255,12 @@ class ChessApp(tk.Tk):
             for c in range(8):
                 piece = self.board.board[r][c]
                 if piece:
-                    # Conversion des coordonnées du Board (r, c) en coordonnées Canvas (cr, cc)
-                    cr, cc = self.board_to_canvas(r, c) 
+                    cr, cc = self.board_to_canvas(r, c)
                     x = cc * self.square_size + self.square_size // 2
                     y = cr * self.square_size + self.square_size // 2
-                    
+
                     img = self.images.get(piece)
                     if img:
-                        # FIX CRITIQUE: Stocker la référence de l'image.
                         ChessApp.canvas_images.append(img)
                         self.canvas.create_image(x, y, image=img, tags=(f"piece_{r}_{c}", "piece"))
 
@@ -1153,7 +1269,8 @@ class ChessApp(tk.Tk):
             cr, cc = self.board_to_canvas(*self.selected)
             x1 = cc * self.square_size;
             y1 = cr * self.square_size
-            self.canvas.create_rectangle(x1, y1, x1 + self.square_size, y1 + self.square_size, outline=HIGHLIGHT_SELECTED,
+            self.canvas.create_rectangle(x1, y1, x1 + self.square_size, y1 + self.square_size,
+                                         outline=HIGHLIGHT_SELECTED,
                                          width=3, tags="selection")
 
             for (tr, tc) in self.legal_targets:
@@ -1172,24 +1289,22 @@ class ChessApp(tk.Tk):
                 self.canvas.create_rectangle(x1, y1, x1 + self.square_size, y1 + self.square_size, outline="red",
                                              width=4)
 
-        # 7. NOUVEAU: Dessin des Coordonnées
+        # 7. Dessin des Coordonnées
         offset = 5
-        # Définir l'ordre des coordonnées en fonction de l'orientation (is_flipped)
         ranks_display = RANKS if self.is_flipped else RANKS[::-1]
         files_display = FILES[::-1] if self.is_flipped else FILES
 
         for i in range(8):
-            # Rangs (Côtés)
             rank_text = ranks_display[i]
-            # Fichiers (Bas/Haut)
             file_text = files_display[i]
-            
-            # Rang (vertical)
+
             self.canvas.create_text(offset, i * self.square_size + offset, anchor='nw', text=rank_text,
                                     fill=coord_color, font=('Arial', 9))
-            
-            # Fichier (horizontal)
-            self.canvas.create_text((7-i) * self.square_size + self.square_size - offset, self.board_px - offset,
+
+            text_x = (i) * self.square_size + self.square_size - offset if self.is_flipped else (
+                                                                                                            7 - i) * self.square_size + self.square_size - offset
+
+            self.canvas.create_text(text_x, self.board_px - offset,
                                     anchor='se', text=file_text,
                                     fill=coord_color, font=('Arial', 9))
 
@@ -1198,12 +1313,22 @@ class ChessApp(tk.Tk):
         if st == 'checkmate':
             if not self.game_over:
                 self.game_over = True
+                self.start_button.config(text="Partie terminée")
+                self.save_game(st)
                 winner_str = 'Les Blancs' if winner == WHITE else 'Les Noirs'
                 self.status.config(text=f"Échec et mat — {winner_str} ont gagné.")
                 messagebox.showinfo("Partie terminée", f"Échec et mat — {winner_str} ont gagné !")
         elif st == 'stalemate':
+            if not self.game_over:
+                self.game_over = True
+                self.start_button.config(text="Partie terminée")
+                self.save_game(st)
             self.status.config(text="Pat (nulle).")
         elif st == 'draw':
+            if not self.game_over:
+                self.game_over = True
+                self.start_button.config(text="Partie terminée")
+                self.save_game(st)
             self.status.config(text="Nulle (50 coups / répétition).")
         else:
             if self.board.king_in_check(self.board.turn):
@@ -1218,6 +1343,7 @@ class ChessApp(tk.Tk):
         self.refresh_captured_display()
         self.refresh_history()
         self.update_clock_labels()
+        self.info_tab.refresh_info()
 
         self.canvas.tag_raise("piece")
 
@@ -1225,8 +1351,7 @@ class ChessApp(tk.Tk):
         """Gère la sélection et le mouvement des pièces (mode double-clic)."""
         if self.animating: return
 
-        # Reprendre le jeu après analyse
-        if len(self.board.history) != len(self.full_history_data):
+        if len(self.board.history) != len(self.full_history_data) and len(self.full_history_data) > 0:
             self.restore_position(len(self.full_history_data) - 1, animate=False)
 
         if not self.started and self.board.game_status()[0] == 'ongoing':
@@ -1277,8 +1402,7 @@ class ChessApp(tk.Tk):
                 move_copy_for_history = copy.deepcopy(chosen_move)
                 self.full_history_data.append(move_copy_for_history)
                 self.board.push_move(chosen_move)
-                
-                # NOUVEAU: Enregistrer le dernier coup pour le surlignage
+
                 self.last_move_squares = (fr, fc), (br, bc)
 
                 captured_symbol = chosen_move.captured
@@ -1376,11 +1500,19 @@ class ChessApp(tk.Tk):
         self.arrow_start_sq = None
         self.draw_board()
 
-    # --- Reste du code ---
+    # --- Logique de sauvegarde des parties ---
+    def save_game(self, status: str):
+        """Enregistre la partie actuelle dans l'historique des parties terminées."""
+        if not self.full_history_data: return
+
+        game_name = f"Partie {len(self.saved_games) + 1} ({status.capitalize()})"
+
+        self.saved_games.append((game_name, copy.deepcopy(self.full_history_data)))
+        self.games_tab.refresh_list()
+
     def on_undo(self):
         if not self.board.history: return
 
-        # Annuler du côté de l'historique complet
         if self.full_history_data:
             self.full_history_data.pop()
 
@@ -1398,16 +1530,22 @@ class ChessApp(tk.Tk):
                 if self.captured_by_black: self.captured_by_black.pop()
 
         self.board.undo_move()
-        # NOUVEAU: Mettre à jour le surlignage après l'undo
         self.last_move_squares = self._get_last_move_from_history()
-        
+
         self.selected = None;
         self.legal_targets = []
         self.game_over = False
+        self.start_button.config(text="Commencer la partie")
         self.history_widget.deselect_all_cells()
         self.draw_board()
+        self.info_tab.refresh_info()
 
     def on_new(self):
+        # 1. Sauvegarder la partie précédente (si elle existe et n'est pas déjà sauvegardée par mat/nulle/temps)
+        if self.full_history_data and not self.game_over:
+            self.save_game("Abandon")
+
+        # 2. Réinitialisation
         self.board = Board()
         self.selected = None;
         self.legal_targets = []
@@ -1423,6 +1561,8 @@ class ChessApp(tk.Tk):
         self.full_history_data = []
         self.last_move_squares = None
         self.draw_board()
+        self.info_tab.refresh_info()
+        self.games_tab.refresh_list()
 
     def compute_legal_targets(self, fr, fc):
         self.legal_targets = []
@@ -1431,7 +1571,7 @@ class ChessApp(tk.Tk):
                 self.legal_targets.append(m.to_sq)
 
     def ask_promotion(self) -> Optional[str]:
-        top = tk.Toplevel(self, bg=THEME_BG_PRIMARY)
+        top = tk.Toplevel(self, bg=UI_BG_PRIMARY)
         top.title("Promotion")
         top.resizable(False, False)
         result = {'val': None}
@@ -1440,8 +1580,8 @@ class ChessApp(tk.Tk):
             result['val'] = v;
             top.destroy()
 
-        tk.Label(top, text="Choisissez la promotion :", bg=THEME_BG_PRIMARY, fg=THEME_FG).pack(padx=8, pady=8)
-        frame = tk.Frame(top, bg=THEME_BG_PRIMARY);
+        tk.Label(top, text="Choisissez la promotion :", bg=UI_BG_PRIMARY, fg=UI_FG).pack(padx=8, pady=8)
+        frame = tk.Frame(top, bg=UI_BG_PRIMARY);
         frame.pack(padx=6, pady=6)
 
         ttk.Button(frame, text="Reine", width=8, command=lambda: pick('q'), style='Dark.TButton').pack(side='left',
@@ -1490,24 +1630,23 @@ class ChessApp(tk.Tk):
                     key = piece_type.lower() if for_white else piece_type
                     img = self.small_images.get(key)
                     if img:
-                        l = tk.Label(container, image=img, bg=THEME_BG_SECONDARY)
+                        l = tk.Label(container, image=img, bg=UI_BG_SECONDARY)
                         l.image = img
                         l.pack(side='left', padx=1)
 
         group_and_show(self.black_capture_frame, self.captured_by_black, for_white=False)
         group_and_show(self.white_capture_frame, self.captured_by_white, for_white=True)
 
-    def set_time_dialog(self, parent_window):  # Modifié pour accepter parent_window
+    def _set_time_dialog(self, parent_window):
         """Ouvre la boîte de dialogue pour changer le temps."""
         val = simpledialog.askinteger("Param. temps", "Temps initial (minutes) :",
                                       initialvalue=self.init_seconds // 60,
-                                      minvalue=1, maxvalue=180, parent=parent_window)  # Ajout de parent=parent_window
+                                      minvalue=1, maxvalue=180, parent=parent_window)
         if val is None: return
         self.init_seconds = int(val) * 60
         self.time_left = {WHITE: self.init_seconds, BLACK: self.init_seconds}
         self.clock_history = []
         self.update_clock_labels()
-        # Fermer la fenêtre de paramètres après l'action
         parent_window.destroy()
 
     def update_clock_labels(self):
@@ -1516,14 +1655,14 @@ class ChessApp(tk.Tk):
 
         if self.started and not self.game_over:
             if self.board.turn == WHITE:
-                self.white_timer_bg.config(bg=THEME_TIMER_ACTIVE)
-                self.black_timer_bg.config(bg=THEME_TIMER_INACTIVE)
+                self.white_timer_bg.config(bg=UI_TIMER_ACTIVE)
+                self.black_timer_bg.config(bg=UI_TIMER_INACTIVE)
             else:
-                self.white_timer_bg.config(bg=THEME_TIMER_INACTIVE)
-                self.black_timer_bg.config(bg=THEME_TIMER_ACTIVE)
+                self.white_timer_bg.config(bg=UI_TIMER_INACTIVE)
+                self.black_timer_bg.config(bg=UI_TIMER_ACTIVE)
         elif not self.started or self.game_over:
-            self.white_timer_bg.config(bg=THEME_TIMER_INACTIVE)
-            self.black_timer_bg.config(bg=THEME_TIMER_INACTIVE)
+            self.white_timer_bg.config(bg=UI_TIMER_INACTIVE)
+            self.black_timer_bg.config(bg=UI_TIMER_INACTIVE)
 
     def _fmt_time(self, secs: int) -> str:
         if secs < 0: secs = 0
@@ -1545,6 +1684,8 @@ class ChessApp(tk.Tk):
             self.time_left[current] -= 1
             if self.time_left[current] <= 0:
                 self.game_over = True
+                self.start_button.config(text="Temps écoulé")
+                self.save_game("Temps écoulé")
                 winner = self.board._opponent(current)
                 winner_str = 'Les Blancs' if winner == WHITE else 'Les Noirs'
                 self.update_clock_labels()
