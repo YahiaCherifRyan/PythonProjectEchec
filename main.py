@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-main.py - Version STABLE FINALE V29 (Fix Init Variables)
-- Correction de l'AttributeError 'is_flipped'.
-- Toutes les variables de jeu (board, is_flipped, theme, etc.) sont initialisées AVANT
-  la création de l'interface graphique pour éviter les crashs au dessin.
+main.py - Version STABLE FINALE V33 (Fix Init Variable Host)
+- Correction critique : Initialisation inconditionnelle de self.is_flipped au démarrage.
+- Résout le crash lors de l'hébergement d'une partie LAN.
 """
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict, Union
 import copy, collections, math
-import random
 import socket
 import threading
 import traceback
+import sys
 
 # ---------------- CONSTANTES DE BASE ----------------
 FILES = 'abcdefgh'
@@ -66,20 +65,30 @@ class NetworkManager:
     def __init__(self, is_host, ip=None):
         self.is_host = is_host
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.conn = None
         self.addr = None
         self.connected = False
         self.local_ip = "127.0.0.1"
+        self.target_ip = ip
 
         if self.is_host:
+            self._start_server()
+
+    def _start_server(self):
+        try:
             try:
-                self.socket.bind(('0.0.0.0', PORT))
-                self.socket.listen(1)
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                self.local_ip = s.getsockname()[0]
+                s.close()
+            except:
                 self.local_ip = socket.gethostbyname(socket.gethostname())
-            except Exception as e:
-                messagebox.showerror("Erreur Réseau", f"Impossible de démarrer le serveur: {e}")
-        else:
-            self.target_ip = ip
+
+            self.socket.bind(('0.0.0.0', PORT))
+            self.socket.listen(1)
+        except Exception as e:
+            raise RuntimeError(f"Erreur liaison port {PORT}: {e}")
 
     def connect(self):
         try:
@@ -88,12 +97,14 @@ class NetworkManager:
                 self.connected = True
                 return True
             else:
+                self.socket.settimeout(5)
                 self.socket.connect((self.target_ip, PORT))
+                self.socket.settimeout(None)
                 self.conn = self.socket
                 self.connected = True
                 return True
         except Exception as e:
-            print(f"Erreur réseau: {e}")
+            print(f"Erreur connexion: {e}")
             return False
 
     def send_move(self, uci_move: str):
@@ -102,20 +113,29 @@ class NetworkManager:
                 self.conn.send(uci_move.encode())
             except Exception as e:
                 print(f"Erreur d'envoi: {e}")
+                self.connected = False
 
     def receive_move(self) -> Optional[str]:
         if self.connected and self.conn:
             try:
                 data = self.conn.recv(1024)
-                if not data: return None
+                if not data:
+                    self.connected = False
+                    return None
                 return data.decode()
             except:
                 return None
         return None
 
     def close(self):
+        self.connected = False
         try:
-            if self.conn: self.conn.close()
+            if self.conn:
+                self.conn.shutdown(socket.SHUT_RDWR)
+                self.conn.close()
+        except:
+            pass
+        try:
             if self.socket: self.socket.close()
         except:
             pass
@@ -672,10 +692,11 @@ class StartMenu(tk.Tk):
         self.title("Sélection du Mode de Jeu")
         self.resizable(False, False)
         self.configure(bg=UI_BG_PRIMARY)
-        self.geometry("300x300")  # Hauteur augmentée
+        self.geometry("300x300")
 
         self.mode = None
         self.network_config = None
+        self.initial_time = 300
 
         style = ttk.Style()
         style.theme_use("default")
@@ -696,14 +717,14 @@ class StartMenu(tk.Tk):
         ttk.Button(main_frame, text="Local (1 PC)", command=lambda: self.select_mode('human'),
                    style='Menu.TButton').pack(fill='x', pady=5)
 
-        # Section RESEAU
+        # Section RESEAU (Padding fixé dans le pack)
         tk.Label(main_frame, text="Mode Réseau (LAN)", font=('TkDefaultFont', 10, 'bold'),
                  bg=UI_BG_PRIMARY, fg=UI_FG, anchor='w').pack(fill='x', pady=(15, 5))
 
         lan_frame = tk.Frame(main_frame, bg=UI_BG_PRIMARY)
         lan_frame.pack(fill='x')
 
-        ttk.Button(lan_frame, text="Héberger", command=lambda: self.select_mode('lan', 'host'),
+        ttk.Button(lan_frame, text="Héberger", command=self.setup_host,
                    style='Menu.TButton').pack(side='left', expand=True, fill='x', padx=(0, 5))
 
         ttk.Button(lan_frame, text="Rejoindre", command=lambda: self.select_mode('lan', 'client'),
@@ -719,6 +740,13 @@ class StartMenu(tk.Tk):
         y = (self.winfo_screenheight() // 2) - (height // 2)
         self.geometry(f'{width}x{height}+{x}+{y}')
 
+    def setup_host(self):
+        val = simpledialog.askinteger("Temps de la partie", "Temps initial par joueur (minutes) :",
+                                      initialvalue=5, minvalue=1, parent=self)
+        if val:
+            self.initial_time = val * 60
+            self.select_mode('lan', 'host')
+
     def select_mode(self, mode, net_config=None):
         self.mode = mode
         self.network_config = net_config
@@ -729,35 +757,38 @@ class StartMenu(tk.Tk):
 class ChessApp(tk.Tk):
     canvas_images: List[tk.PhotoImage] = []
 
-    def __init__(self, mode: str, network_config=None):
+    def __init__(self, mode: str, network_config=None, initial_time_seconds=300):
         super().__init__()
 
-        # 1. INITIALISATION DES VARIABLES EN PREMIER (FIX CRITIQUE ATTRIBUTE ERROR)
+        # 1. INITIALISATION DES VARIABLES (AVANT TOUT UI)
         self.game_mode = mode
         self.network_manager = None
         self.is_host = False
+        self.init_seconds = initial_time_seconds
         self.is_analyzing_saved_game = False
         self.square_size = 72
         self.board_px = 8 * self.square_size
         self.board = Board()
-        self.captured_by_white: List[str] = []
-        self.captured_by_black: List[str] = []
-        self.full_history_data: List[Move] = []
-        self.saved_games: List[Tuple[str, List[Move]]] = []
-        self.selected: Optional[Tuple[int, int]] = None
-        self.legal_targets: List[Tuple[int, int]] = []
+        self.captured_by_white = []
+        self.captured_by_black = []
+        self.full_history_data = []
+        self.saved_games = []
+        self.selected = None
+        self.legal_targets = []
         self.animating = False
         self.game_over = False
         self.started = False
-        self.init_seconds = 5 * 60
         self.time_left = {WHITE: self.init_seconds, BLACK: self.init_seconds}
         self.clock_history: List[Tuple[int, int]] = []
         self.last_move_squares: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None
+
+        # FIX V33: is_flipped doit exister dans TOUS les cas
         self.is_flipped = False
+
         self.current_theme = 'dark'
-        self.drawn_annotations: List[Union[Tuple[Tuple[int, int]], Tuple[Tuple[int, int], Tuple[int, int]]]] = []
-        self.images: Dict[str, tk.PhotoImage] = {}
-        self.small_images: Dict[str, tk.PhotoImage] = {}
+        self.drawn_annotations = []
+        self.images = {}
+        self.small_images = {}
 
         # Config Réseau
         if self.game_mode == 'lan':
@@ -766,16 +797,18 @@ class ChessApp(tk.Tk):
                 try:
                     self.network_manager = NetworkManager(is_host=True)
                     self.after(100, lambda: messagebox.showinfo("Hébergement",
-                                                                f"En attente de connexion...\nIP: {self.network_manager.local_ip}"))
+                                                                f"En attente de connexion...\nVotre IP Locale : {self.network_manager.local_ip}"))
                     threading.Thread(target=self._wait_for_connection, daemon=True).start()
-                except:
-                    pass
+                except Exception as e:
+                    messagebox.showerror("Erreur", f"Impossible d'héberger : {e}")
+                    self.destroy();
+                    return
             else:
                 target_ip = simpledialog.askstring("Connexion", "Entrez l'IP de l'hôte:")
                 if target_ip:
                     self.network_manager = NetworkManager(is_host=False, ip=target_ip)
                     if self.network_manager.connect():
-                        self.is_flipped = True
+                        self.is_flipped = True  # Initialisation spécifique Client
                         threading.Thread(target=self._listen_network, daemon=True).start()
                     else:
                         messagebox.showerror("Erreur", "Impossible de se connecter à l'hôte.")
@@ -788,30 +821,45 @@ class ChessApp(tk.Tk):
         self.title(f"Échecs - {mode.upper()}")
         self.resizable(False, False)
         self.configure(bg=UI_BG_PRIMARY)
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        # 2. LANCEMENT DE L'INITIALISATION DIFFÉRÉE
-        self.after_idle(self._setup_widgets_safe)
+        # 2. Lancement direct de l'initialisation UI (Sans after_idle)
+        self._setup_widgets()
 
-    def _setup_widgets_safe(self):
-        try:
-            self._setup_widgets()
-        except Exception as e:
-            err = traceback.format_exc()
-            messagebox.showerror("Erreur Critique", f"Erreur lors du chargement :\n\n{err}")
-            self.destroy()
+    def on_close(self):
+        if self.network_manager:
+            self.network_manager.close()
+        self.destroy()
+        sys.exit(0)
 
     def _wait_for_connection(self):
         if self.network_manager.connect():
+            if self.is_host:
+                self.network_manager.send_move(f"TIME:{self.init_seconds}")
             self.after(0, lambda: messagebox.showinfo("Info", "Client connecté !"))
+            self.after(0, self.on_start)
             threading.Thread(target=self._listen_network, daemon=True).start()
 
     def _listen_network(self):
         while True:
-            move_uci = self.network_manager.receive_move()
-            if move_uci:
-                self.after(0, lambda m=move_uci: self.apply_network_move(m))
+            msg = self.network_manager.receive_move()
+            if msg:
+                if msg.startswith("TIME:"):
+                    try:
+                        t = int(msg.split(":")[1])
+                        self.after(0, lambda val=t: self._sync_time_client(val))
+                    except:
+                        pass
+                else:
+                    self.after(0, lambda m=msg: self.apply_network_move(m))
             else:
                 break
+
+    def _sync_time_client(self, seconds):
+        self.init_seconds = seconds
+        self.time_left = {WHITE: seconds, BLACK: seconds}
+        self.update_clock_labels()
+        self.on_start()
 
     def apply_network_move(self, uci: str):
         move = self.board.make_move_uci(uci)
@@ -827,6 +875,7 @@ class ChessApp(tk.Tk):
 
             self.draw_board()
             self.info_tab.refresh_info()
+
             if not self.started:
                 self.started = True
                 self.start_button.config(text="En cours")
@@ -880,13 +929,16 @@ class ChessApp(tk.Tk):
         self.games_tab.pack(fill='both', expand=True)
         self.tab_control.add(games_frame, text="Parties")
 
-        btn_frame = tk.Frame(self.side_frame, bg=UI_BG_PRIMARY)
-        btn_frame.pack(pady=12, fill='x')
-        ttk.Button(btn_frame, text="Annuler", command=self.on_undo, style='Dark.TButton').pack(side='left', padx=2,
-                                                                                               fill='x', expand=True)
-        ttk.Button(btn_frame, text="Nouvelle partie", command=self.on_new, style='Dark.TButton').pack(side='left',
-                                                                                                      padx=2, fill='x',
-                                                                                                      expand=True)
+        if self.game_mode != 'lan':
+            btn_frame = tk.Frame(self.side_frame, bg=UI_BG_PRIMARY)
+            btn_frame.pack(pady=12, fill='x')
+            ttk.Button(btn_frame, text="Annuler", command=self.on_undo, style='Dark.TButton').pack(side='left', padx=2,
+                                                                                                   fill='x',
+                                                                                                   expand=True)
+            ttk.Button(btn_frame, text="Nouvelle partie", command=self.on_new, style='Dark.TButton').pack(side='left',
+                                                                                                          padx=2,
+                                                                                                          fill='x',
+                                                                                                          expand=True)
 
         self.status = tk.Label(self.board_frame, text="", anchor='w', bg=UI_BG_PRIMARY, fg=UI_FG, height=1,
                                font=('TkDefaultFont', 11))
@@ -901,11 +953,14 @@ class ChessApp(tk.Tk):
         self.canvas.bind("<Control-B3-Motion>", self.on_ctrl_click_drag)
         self.canvas.bind("<Control-ButtonRelease-3>", self.on_ctrl_click_release)
 
-        self.start_button = ttk.Button(self.board_frame, text="Commencer la partie", command=self.on_start,
-                                       style='Dark.TButton')
-        self.start_button.grid(row=2, column=0, sticky='we', pady=(6, 0))
+        if self.game_mode != 'lan':
+            self.start_button = ttk.Button(self.board_frame, text="Commencer la partie", command=self.on_start,
+                                           style='Dark.TButton')
+            self.start_button.grid(row=2, column=0, sticky='we', pady=(6, 0))
+        else:
+            self.start_button = tk.Label(self.board_frame, text="Partie Réseau", bg=UI_BG_PRIMARY, fg=UI_FG)
+            self.start_button.grid(row=2, column=0, sticky='we', pady=(6, 0))
 
-        # Application directe du thème (Fix Compatibilité Python 3.14)
         global BOARD_LIGHT, BOARD_DARK, HIGHLIGHT_LAST_MOVE, HIGHLIGHT_SELECTED, HIGHLIGHT_TARGET
         BOARD_LIGHT = DARK_BOARD_LIGHT
         BOARD_DARK = DARK_BOARD_DARK
@@ -913,12 +968,20 @@ class ChessApp(tk.Tk):
         HIGHLIGHT_SELECTED = DARK_HIGHLIGHT_SELECTED
         HIGHLIGHT_TARGET = DARK_HIGHLIGHT_TARGET
 
+        self.white_timer_bg.config(bg=UI_TIMER_INACTIVE)
+        self.black_timer_frame.config(bg=UI_BG_SECONDARY)
+        for w in self.black_timer_frame.winfo_children():
+            if isinstance(w, tk.Label): w.config(bg=UI_BG_SECONDARY, fg=UI_FG)
+
         self.update_clock_labels()
         self.after(1000, self._tick)
 
         self.update_idletasks()
         self.draw_board()
         self.info_tab.refresh_info()
+
+        if self.game_mode == 'human':
+            pass
 
     def _load_images(self):
         self.images: Dict[str, tk.PhotoImage] = {}
@@ -967,7 +1030,7 @@ class ChessApp(tk.Tk):
             self.black_capture_frame = capture_frame
         return frame
 
-    # ... (Méthodes de jeu standards) ...
+    # ... (Méthodes de jeu) ...
     def board_to_canvas(self, r, c):
         if self.is_flipped:
             return (r, 7 - c)
@@ -1082,7 +1145,7 @@ class ChessApp(tk.Tk):
         if st == 'checkmate':
             if not self.game_over:
                 self.game_over = True
-                self.start_button.config(text="Partie terminée")
+                if self.game_mode != 'lan': self.start_button.config(text="Partie terminée")
                 if not self.is_analyzing_saved_game: self.save_game(st)
                 winner_str = 'Les Blancs' if winner == WHITE else 'Les Noirs'
                 messagebox.showinfo("Fin", f"Échec et mat ! {winner_str} gagnent.")
@@ -1090,7 +1153,7 @@ class ChessApp(tk.Tk):
         elif st in ('stalemate', 'draw'):
             if not self.game_over:
                 self.game_over = True
-                self.start_button.config(text="Partie terminée")
+                if self.game_mode != 'lan': self.start_button.config(text="Partie terminée")
                 if not self.is_analyzing_saved_game: self.save_game(st)
             status_text = "Nulle"
         else:
@@ -1261,7 +1324,7 @@ class ChessApp(tk.Tk):
         self.legal_targets = [];
         self.game_over = False
         self.is_analyzing_saved_game = False
-        self.start_button.config(text="Commencer la partie")
+        if self.game_mode != 'lan': self.start_button.config(text="Commencer la partie")
         self.history_widget.deselect_all_cells()
         self.draw_board()
         self.info_tab.refresh_info()
@@ -1279,7 +1342,7 @@ class ChessApp(tk.Tk):
         self.game_over = False
         self.started = False
         self.is_analyzing_saved_game = False
-        self.start_button.config(text="Commencer la partie")
+        if self.game_mode != 'lan': self.start_button.config(text="Commencer la partie")
         self.time_left = {WHITE: self.init_seconds, BLACK: self.init_seconds}
         self.clock_history = []
         self.captured_by_white = []
@@ -1339,6 +1402,9 @@ class ChessApp(tk.Tk):
         show(self.black_capture_frame, self.captured_by_black, False)
 
     def _set_time_dialog(self, parent):
+        if self.game_mode == 'lan':
+            messagebox.showwarning("Interdit", "Impossible de changer le temps en partie LAN.")
+            return
         val = simpledialog.askinteger("Temps", "Minutes:", initialvalue=5, minvalue=1, parent=parent)
         if val:
             self.init_seconds = val * 60
@@ -1363,14 +1429,15 @@ class ChessApp(tk.Tk):
         return f"{s // 60:02d}:{s % 60:02d}"
 
     def on_start(self):
-        if not self.started: self.started = True; self.start_button.config(text="En cours")
+        if not self.started: self.started = True;
+        if self.game_mode != 'lan': self.start_button.config(text="En cours")
 
     def _tick(self):
         if self.started and not self.animating and not self.game_over:
             self.time_left[self.board.turn] -= 1
             if self.time_left[self.board.turn] <= 0:
                 self.game_over = True
-                self.start_button.config(text="Temps écoulé")
+                if self.game_mode != 'lan': self.start_button.config(text="Temps écoulé")
                 if not self.is_analyzing_saved_game: self.save_game("Temps")
                 messagebox.showinfo("Fin", "Temps écoulé !")
             self.update_clock_labels()
@@ -1381,7 +1448,7 @@ class ChessApp(tk.Tk):
         self.apply_theme_colors(theme)
         self.draw_board()
 
-    # Pour garder compatibilité avec le bouton, on garde la méthode mais on l'inline dans l'init
+    # Inline
     def apply_theme_colors(self, theme_name):
         global BOARD_LIGHT, BOARD_DARK, HIGHLIGHT_LAST_MOVE, HIGHLIGHT_SELECTED, HIGHLIGHT_TARGET
         if theme_name == 'dark':
@@ -1397,7 +1464,6 @@ class ChessApp(tk.Tk):
             HIGHLIGHT_SELECTED = LIGHT_HIGHLIGHT_SELECTED
             HIGHLIGHT_TARGET = LIGHT_HIGHLIGHT_TARGET
 
-        # Mise à jour timer
         for frame in [self.black_timer_frame, self.white_timer_frame]:
             frame.config(bg=UI_BG_SECONDARY)
             for widget in frame.winfo_children():
@@ -1422,5 +1488,5 @@ if __name__ == "__main__":
     menu.mainloop()
 
     if menu.mode:
-        app = ChessApp(mode=menu.mode, network_config=menu.network_config)
+        app = ChessApp(mode=menu.mode, network_config=menu.network_config, initial_time_seconds=menu.initial_time)
         app.mainloop()
