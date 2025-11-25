@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-main.py - Version STABLE FINALE V33 (Fix Init Variable Host)
-- Correction critique : Initialisation inconditionnelle de self.is_flipped au démarrage.
-- Résout le crash lors de l'hébergement d'une partie LAN.
+main.py - Version STABLE FINALE V33 (Fix Réseau & Logique Tour)
+- Correction : Harmonisation des méthodes d'envoi réseau (send_packet).
+- UX : Le statut indique clairement "A vous de jouer" ou "En attente".
+- Fix : L'hôte peut maintenant jouer son premier coup sans erreur.
 """
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -107,15 +108,16 @@ class NetworkManager:
             print(f"Erreur connexion: {e}")
             return False
 
-    def send_move(self, uci_move: str):
+    def send_packet(self, data: str):
+        """Envoie une donnée (Coup ou Commande)"""
         if self.connected and self.conn:
             try:
-                self.conn.send(uci_move.encode())
+                self.conn.send(data.encode())
             except Exception as e:
                 print(f"Erreur d'envoi: {e}")
                 self.connected = False
 
-    def receive_move(self) -> Optional[str]:
+    def receive_packet(self) -> Optional[str]:
         if self.connected and self.conn:
             try:
                 data = self.conn.recv(1024)
@@ -679,7 +681,6 @@ class GamesTab(tk.Frame):
                 self.app.on_new()
             self.app.started = False;
             self.app.game_over = False
-            self.app.start_button.config(text="Commencer la partie")
             self.app.is_analyzing_saved_game = True
             self.app.tab_control.select(0)
             self.tree.selection_remove(sel[0])
@@ -717,7 +718,7 @@ class StartMenu(tk.Tk):
         ttk.Button(main_frame, text="Local (1 PC)", command=lambda: self.select_mode('human'),
                    style='Menu.TButton').pack(fill='x', pady=5)
 
-        # Section RESEAU (Padding fixé dans le pack)
+        # Section RESEAU
         tk.Label(main_frame, text="Mode Réseau (LAN)", font=('TkDefaultFont', 10, 'bold'),
                  bg=UI_BG_PRIMARY, fg=UI_FG, anchor='w').pack(fill='x', pady=(15, 5))
 
@@ -782,8 +783,7 @@ class ChessApp(tk.Tk):
         self.clock_history: List[Tuple[int, int]] = []
         self.last_move_squares: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None
 
-        # FIX V33: is_flipped doit exister dans TOUS les cas
-        self.is_flipped = False
+        self.is_flipped = False  # Initialisation par défaut
 
         self.current_theme = 'dark'
         self.drawn_annotations = []
@@ -808,7 +808,7 @@ class ChessApp(tk.Tk):
                 if target_ip:
                     self.network_manager = NetworkManager(is_host=False, ip=target_ip)
                     if self.network_manager.connect():
-                        self.is_flipped = True  # Initialisation spécifique Client
+                        self.is_flipped = True
                         threading.Thread(target=self._listen_network, daemon=True).start()
                     else:
                         messagebox.showerror("Erreur", "Impossible de se connecter à l'hôte.")
@@ -823,7 +823,7 @@ class ChessApp(tk.Tk):
         self.configure(bg=UI_BG_PRIMARY)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        # 2. Lancement direct de l'initialisation UI (Sans after_idle)
+        # 2. INITIALISATION UI DIRECTE
         self._setup_widgets()
 
     def on_close(self):
@@ -835,14 +835,14 @@ class ChessApp(tk.Tk):
     def _wait_for_connection(self):
         if self.network_manager.connect():
             if self.is_host:
-                self.network_manager.send_move(f"TIME:{self.init_seconds}")
+                self.network_manager.send_packet(f"TIME:{self.init_seconds}")
             self.after(0, lambda: messagebox.showinfo("Info", "Client connecté !"))
             self.after(0, self.on_start)
             threading.Thread(target=self._listen_network, daemon=True).start()
 
     def _listen_network(self):
         while True:
-            msg = self.network_manager.receive_move()
+            msg = self.network_manager.receive_packet()
             if msg:
                 if msg.startswith("TIME:"):
                     try:
@@ -850,10 +850,41 @@ class ChessApp(tk.Tk):
                         self.after(0, lambda val=t: self._sync_time_client(val))
                     except:
                         pass
+                elif msg.startswith("CMD:"):
+                    self.after(0, lambda c=msg: self.handle_network_command(c))
                 else:
                     self.after(0, lambda m=msg: self.apply_network_move(m))
             else:
                 break
+
+    def handle_network_command(self, cmd):
+        if cmd == "CMD:REMATCH":
+            res = messagebox.askyesno("Revanche", "L'adversaire propose une revanche. Accepter ?")
+            if res:
+                self.network_manager.send_packet("CMD:RESET")
+                self.reset_lan_game()
+        elif cmd == "CMD:RESET":
+            self.reset_lan_game()
+
+    def reset_lan_game(self):
+        self.board = Board()
+        self.selected = None
+        self.legal_targets = []
+        self.animating = False
+        self.game_over = False
+        self.started = True
+        self.time_left = {WHITE: self.init_seconds, BLACK: self.init_seconds}
+        self.clock_history = []
+        self.captured_by_white = []
+        self.captured_by_black = []
+        self.full_history_data = []
+        self.last_move_squares = None
+        self.drawn_annotations = []
+
+        self.draw_board()
+        self.info_tab.refresh_info()
+        self.games_tab.refresh_list()
+        self.update_clock_labels()
 
     def _sync_time_client(self, seconds):
         self.init_seconds = seconds
@@ -878,7 +909,6 @@ class ChessApp(tk.Tk):
 
             if not self.started:
                 self.started = True
-                self.start_button.config(text="En cours")
 
     def _setup_widgets(self):
         self._load_images()
@@ -1030,7 +1060,6 @@ class ChessApp(tk.Tk):
             self.black_capture_frame = capture_frame
         return frame
 
-    # ... (Méthodes de jeu) ...
     def board_to_canvas(self, r, c):
         if self.is_flipped:
             return (r, 7 - c)
@@ -1149,12 +1178,14 @@ class ChessApp(tk.Tk):
                 if not self.is_analyzing_saved_game: self.save_game(st)
                 winner_str = 'Les Blancs' if winner == WHITE else 'Les Noirs'
                 messagebox.showinfo("Fin", f"Échec et mat ! {winner_str} gagnent.")
+                if self.game_mode == 'lan': self.handle_lan_end_game()
             status_text = f"Mat ! {winner}"
         elif st in ('stalemate', 'draw'):
             if not self.game_over:
                 self.game_over = True
                 if self.game_mode != 'lan': self.start_button.config(text="Partie terminée")
                 if not self.is_analyzing_saved_game: self.save_game(st)
+                if self.game_mode == 'lan': self.handle_lan_end_game()
             status_text = "Nulle"
         else:
             if self.board.king_in_check(self.board.turn):
@@ -1173,10 +1204,17 @@ class ChessApp(tk.Tk):
         self.info_tab.refresh_info()
         self.canvas.tag_raise("piece")
 
+    def handle_lan_end_game(self):
+        """Gestion fin de partie LAN : Demande de revanche."""
+        res = messagebox.askyesno("Partie Terminée", "Voulez-vous proposer une revanche ?")
+        if res:
+            self.network_manager.send_packet("CMD:REMATCH")
+        else:
+            pass
+
     def on_click_move(self, event):
         if self.animating: return
 
-        # En mode LAN, vérifier si c'est mon tour
         if self.game_mode == 'lan':
             if self.network_manager.is_host and self.board.turn == BLACK: return
             if not self.network_manager.is_host and self.board.turn == WHITE: return
@@ -1186,7 +1224,6 @@ class ChessApp(tk.Tk):
 
         if not self.started and self.board.game_status()[0] == 'ongoing':
             self.started = True
-            # Quand on commence à jouer, on n'est plus en mode analyse d'une partie sauvegardée
             self.is_analyzing_saved_game = False
 
         if self.game_over: return
@@ -1240,9 +1277,8 @@ class ChessApp(tk.Tk):
                     else:
                         self.captured_by_black.append(chosen_move.captured)
 
-                # Envoi Réseau
                 if self.game_mode == 'lan':
-                    self.network_manager.send_move(chosen_move.uci())
+                    self.network_manager.send_packet(chosen_move.uci())
 
                 self.drawn_annotations = []
                 self.history_widget.deselect_all_cells()
@@ -1330,7 +1366,6 @@ class ChessApp(tk.Tk):
         self.info_tab.refresh_info()
 
     def on_new(self):
-        # FIX CRITIQUE DOUBLON : Ne pas sauvegarder si on analyse une partie déjà finie
         is_finished = self.board.game_status()[0] != 'ongoing'
         if self.full_history_data and not is_finished and not self.is_analyzing_saved_game:
             self.save_game("Abandon")
