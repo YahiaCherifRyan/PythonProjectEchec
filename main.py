@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-main.py - Version STABLE FINALE V28 (Fix Python 3.14 Compatibility)
-- Contournement de l'AttributeError sur apply_theme_colors en appliquant la logique
-  directement dans l'initialisation au lieu d'appeler une sous-méthode.
-- Conserve le Menu, le Réseau, et l'Anti-doublon.
+main.py - Version STABLE FINALE V29 (Fix Init Variables)
+- Correction de l'AttributeError 'is_flipped'.
+- Toutes les variables de jeu (board, is_flipped, theme, etc.) sont initialisées AVANT
+  la création de l'interface graphique pour éviter les crashs au dessin.
 """
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Dict, Union
 import copy, collections, math
+import random
 import socket
 import threading
 import traceback
@@ -671,7 +672,7 @@ class StartMenu(tk.Tk):
         self.title("Sélection du Mode de Jeu")
         self.resizable(False, False)
         self.configure(bg=UI_BG_PRIMARY)
-        self.geometry("300x300")  # Hauteur agrandie pour éviter que les boutons soient coupés
+        self.geometry("300x300")  # Hauteur augmentée
 
         self.mode = None
         self.network_config = None
@@ -695,7 +696,7 @@ class StartMenu(tk.Tk):
         ttk.Button(main_frame, text="Local (1 PC)", command=lambda: self.select_mode('human'),
                    style='Menu.TButton').pack(fill='x', pady=5)
 
-        # Section RESEAU (Le padding est déplacé ici pour éviter le bug Tcl)
+        # Section RESEAU
         tk.Label(main_frame, text="Mode Réseau (LAN)", font=('TkDefaultFont', 10, 'bold'),
                  bg=UI_BG_PRIMARY, fg=UI_FG, anchor='w').pack(fill='x', pady=(15, 5))
 
@@ -731,42 +732,11 @@ class ChessApp(tk.Tk):
     def __init__(self, mode: str, network_config=None):
         super().__init__()
 
-        self.game_mode = mode  # 'human', 'lan'
+        # 1. INITIALISATION DES VARIABLES EN PREMIER (FIX CRITIQUE ATTRIBUTE ERROR)
+        self.game_mode = mode
         self.network_manager = None
         self.is_host = False
-
-        # Config LAN
-        if self.game_mode == 'lan':
-            self.is_host = (network_config == 'host')
-            if self.is_host:
-                self.network_manager = NetworkManager(is_host=True)
-                self.after(100, lambda: messagebox.showinfo("Hébergement",
-                                                            f"En attente de connexion...\nIP: {self.network_manager.local_ip}"))
-                threading.Thread(target=self._wait_for_connection, daemon=True).start()
-            else:
-                target_ip = simpledialog.askstring("Connexion", "Entrez l'IP de l'hôte:")
-                if target_ip:
-                    self.network_manager = NetworkManager(is_host=False, ip=target_ip)
-                    if self.network_manager.connect():
-                        self.is_flipped = True
-                        threading.Thread(target=self._listen_network, daemon=True).start()
-                    else:
-                        messagebox.showerror("Erreur", "Impossible de se connecter à l'hôte.")
-                        self.destroy();
-                        return
-                else:
-                    self.destroy();
-                    return
-
-        self.is_analyzing_saved_game: bool = False
-        self.title(f"Échecs - {mode.upper()}")
-        self.resizable(False, False)
-        self.configure(bg=UI_BG_PRIMARY)
-
-        # Sécurité d'initialisation pour éviter les erreurs
-        self.after_idle(self._setup_widgets_safe)
-
-        # Init Variables
+        self.is_analyzing_saved_game = False
         self.square_size = 72
         self.board_px = 8 * self.square_size
         self.board = Board()
@@ -783,21 +753,51 @@ class ChessApp(tk.Tk):
         self.time_left = {WHITE: self.init_seconds, BLACK: self.init_seconds}
         self.clock_history: List[Tuple[int, int]] = []
         self.last_move_squares: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None
-
-        if self.game_mode != 'lan': self.is_flipped = False
+        self.is_flipped = False
         self.current_theme = 'dark'
         self.drawn_annotations: List[Union[Tuple[Tuple[int, int]], Tuple[Tuple[int, int], Tuple[int, int]]]] = []
         self.images: Dict[str, tk.PhotoImage] = {}
         self.small_images: Dict[str, tk.PhotoImage] = {}
 
+        # Config Réseau
+        if self.game_mode == 'lan':
+            self.is_host = (network_config == 'host')
+            if self.is_host:
+                try:
+                    self.network_manager = NetworkManager(is_host=True)
+                    self.after(100, lambda: messagebox.showinfo("Hébergement",
+                                                                f"En attente de connexion...\nIP: {self.network_manager.local_ip}"))
+                    threading.Thread(target=self._wait_for_connection, daemon=True).start()
+                except:
+                    pass
+            else:
+                target_ip = simpledialog.askstring("Connexion", "Entrez l'IP de l'hôte:")
+                if target_ip:
+                    self.network_manager = NetworkManager(is_host=False, ip=target_ip)
+                    if self.network_manager.connect():
+                        self.is_flipped = True
+                        threading.Thread(target=self._listen_network, daemon=True).start()
+                    else:
+                        messagebox.showerror("Erreur", "Impossible de se connecter à l'hôte.")
+                        self.destroy();
+                        return
+                else:
+                    self.destroy();
+                    return
+
+        self.title(f"Échecs - {mode.upper()}")
+        self.resizable(False, False)
+        self.configure(bg=UI_BG_PRIMARY)
+
+        # 2. LANCEMENT DE L'INITIALISATION DIFFÉRÉE
+        self.after_idle(self._setup_widgets_safe)
+
     def _setup_widgets_safe(self):
-        """Wrapper pour capturer les erreurs d'initialisation."""
         try:
             self._setup_widgets()
         except Exception as e:
             err = traceback.format_exc()
-            messagebox.showerror("Erreur Critique au Lancement",
-                                 f"Une erreur est survenue lors du chargement de l'interface :\n\n{err}")
+            messagebox.showerror("Erreur Critique", f"Erreur lors du chargement :\n\n{err}")
             self.destroy()
 
     def _wait_for_connection(self):
@@ -905,7 +905,7 @@ class ChessApp(tk.Tk):
                                        style='Dark.TButton')
         self.start_button.grid(row=2, column=0, sticky='we', pady=(6, 0))
 
-        # Appliquer le thème directement sans appeler la méthode externe
+        # Application directe du thème (Fix Compatibilité Python 3.14)
         global BOARD_LIGHT, BOARD_DARK, HIGHLIGHT_LAST_MOVE, HIGHLIGHT_SELECTED, HIGHLIGHT_TARGET
         BOARD_LIGHT = DARK_BOARD_LIGHT
         BOARD_DARK = DARK_BOARD_DARK
@@ -913,16 +913,9 @@ class ChessApp(tk.Tk):
         HIGHLIGHT_SELECTED = DARK_HIGHLIGHT_SELECTED
         HIGHLIGHT_TARGET = DARK_HIGHLIGHT_TARGET
 
-        # Timer backgrounds
-        self.white_timer_bg.config(bg=UI_TIMER_INACTIVE)
-        self.black_timer_frame.config(bg=UI_BG_SECONDARY)  # Reset background
-        for w in self.black_timer_frame.winfo_children():
-            if isinstance(w, tk.Label): w.config(bg=UI_BG_SECONDARY, fg=UI_FG)
-
         self.update_clock_labels()
         self.after(1000, self._tick)
 
-        # FIX CRITIQUE: Forcer le dessin du plateau
         self.update_idletasks()
         self.draw_board()
         self.info_tab.refresh_info()
@@ -1084,6 +1077,7 @@ class ChessApp(tk.Tk):
 
         st, winner = self.board.game_status()
 
+        # Gestion du texte de statut et sauvegarde
         status_text = ""
         if st == 'checkmate':
             if not self.game_over:
@@ -1119,6 +1113,7 @@ class ChessApp(tk.Tk):
     def on_click_move(self, event):
         if self.animating: return
 
+        # En mode LAN, vérifier si c'est mon tour
         if self.game_mode == 'lan':
             if self.network_manager.is_host and self.board.turn == BLACK: return
             if not self.network_manager.is_host and self.board.turn == WHITE: return
@@ -1128,6 +1123,7 @@ class ChessApp(tk.Tk):
 
         if not self.started and self.board.game_status()[0] == 'ongoing':
             self.started = True
+            # Quand on commence à jouer, on n'est plus en mode analyse d'une partie sauvegardée
             self.is_analyzing_saved_game = False
 
         if self.game_over: return
@@ -1181,6 +1177,7 @@ class ChessApp(tk.Tk):
                     else:
                         self.captured_by_black.append(chosen_move.captured)
 
+                # Envoi Réseau
                 if self.game_mode == 'lan':
                     self.network_manager.send_move(chosen_move.uci())
 
@@ -1380,7 +1377,6 @@ class ChessApp(tk.Tk):
         self.after(1000, self._tick)
 
     def toggle_theme(self, theme):
-        # Méthode appelée uniquement via bouton, pas à l'init
         self.current_theme = theme
         self.apply_theme_colors(theme)
         self.draw_board()
